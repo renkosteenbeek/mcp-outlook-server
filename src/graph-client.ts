@@ -4,16 +4,18 @@ import 'isomorphic-fetch';
 
 export class GraphClient {
   private authManager: AuthManager;
+  private accountName: string;
 
-  constructor(authManager: AuthManager) {
+  constructor(authManager: AuthManager, accountName: string) {
     this.authManager = authManager;
+    this.accountName = accountName;
   }
 
   private async getAuthenticatedClient(): Promise<Client> {
-    const accessToken = await this.authManager.getAccessToken();
+    const accessToken = await this.authManager.getAccessToken(this.accountName);
     
     if (!accessToken) {
-      throw new Error('No access token available. Please authenticate first.');
+      throw new Error(`No access token available for account ${this.accountName}. Please authenticate first.`);
     }
 
     return Client.init({

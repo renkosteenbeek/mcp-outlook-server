@@ -1,5 +1,6 @@
 import { ConfidentialClientApplication, AuthorizationCodeRequest, AuthorizationUrlRequest } from '@azure/msal-node';
 import { config } from './config.js';
+import { AccountConfig, AccountTokenCache } from './types.js';
 import * as fs from 'fs';
 import * as path from 'path';
 import { fileURLToPath } from 'url';
@@ -8,23 +9,33 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 export class AuthManager {
-  private msalClient: ConfidentialClientApplication;
+  private msalClients: Map<string, ConfidentialClientApplication> = new Map();
   private tokenCachePath: string;
+  private pendingAuth: Map<string, (code: string) => Promise<void>> = new Map();
 
   constructor() {
-    const msalConfig = {
-      auth: {
-        clientId: config.clientId,
-        authority: `https://login.microsoftonline.com/${config.tenantId}`,
-        clientSecret: config.clientSecret,
-      },
-    };
-
-    this.msalClient = new ConfidentialClientApplication(msalConfig);
     this.tokenCachePath = path.join(__dirname, '../.tokens.json');
+    
+    // Initialize MSAL clients for each account
+    for (const account of config.accounts) {
+      const msalConfig = {
+        auth: {
+          clientId: account.clientId,
+          authority: `https://login.microsoftonline.com/${account.tenantId}`,
+          clientSecret: account.clientSecret,
+        },
+      };
+      
+      this.msalClients.set(account.name, new ConfidentialClientApplication(msalConfig));
+    }
   }
 
-  async getAuthUrl(): Promise<string> {
+  async getAuthUrl(accountName: string): Promise<string> {
+    const client = this.msalClients.get(accountName);
+    if (!client) {
+      throw new Error(`Account ${accountName} not found`);
+    }
+
     const authCodeUrlParameters: AuthorizationUrlRequest = {
       scopes: [
         'User.Read',
@@ -34,14 +45,20 @@ export class AuthManager {
         'Calendars.Read',
         'Calendars.ReadWrite',
       ],
-      redirectUri: config.redirectUri,
+      redirectUri: config.server.redirectUri,
+      state: accountName, // Use state to identify which account is authenticating
     };
 
-    const response = await this.msalClient.getAuthCodeUrl(authCodeUrlParameters);
+    const response = await client.getAuthCodeUrl(authCodeUrlParameters);
     return response;
   }
 
-  async acquireTokenByCode(code: string): Promise<any> {
+  async acquireTokenByCode(code: string, accountName: string): Promise<any> {
+    const client = this.msalClients.get(accountName);
+    if (!client) {
+      throw new Error(`Account ${accountName} not found`);
+    }
+
     const tokenRequest: AuthorizationCodeRequest = {
       code: code,
       scopes: [
@@ -52,20 +69,25 @@ export class AuthManager {
         'Calendars.Read',
         'Calendars.ReadWrite',
       ],
-      redirectUri: config.redirectUri,
+      redirectUri: config.server.redirectUri,
     };
 
-    const response = await this.msalClient.acquireTokenByCode(tokenRequest);
+    const response = await client.acquireTokenByCode(tokenRequest);
     
     // Save token to cache
-    this.saveTokenToCache(response);
+    this.saveTokenToCache(accountName, response);
     
     return response;
   }
 
-  async getAccessToken(): Promise<string | null> {
+  async getAccessToken(accountName: string): Promise<string | null> {
+    const client = this.msalClients.get(accountName);
+    if (!client) {
+      throw new Error(`Account ${accountName} not found`);
+    }
+
     // Try to get token from cache first
-    const cachedToken = this.loadTokenFromCache();
+    const cachedToken = this.loadTokenFromCache(accountName);
     
     if (cachedToken && new Date(cachedToken.expiresOn) > new Date()) {
       return cachedToken.accessToken;
@@ -86,11 +108,11 @@ export class AuthManager {
           ],
         };
 
-        const response = await this.msalClient.acquireTokenSilent(silentRequest);
-        this.saveTokenToCache(response);
+        const response = await client.acquireTokenSilent(silentRequest);
+        this.saveTokenToCache(accountName, response);
         return response.accessToken;
       } catch (error) {
-        console.error('Failed to refresh token:', error);
+        console.error(`Failed to refresh token for ${accountName}:`, error);
         return null;
       }
     }
@@ -98,30 +120,71 @@ export class AuthManager {
     return null;
   }
 
-  private saveTokenToCache(tokenResponse: any): void {
-    try {
-      fs.writeFileSync(this.tokenCachePath, JSON.stringify(tokenResponse, null, 2));
-    } catch (error) {
-      console.error('Failed to save token:', error);
+  getAllAccountNames(): string[] {
+    return config.accounts.map(acc => acc.name);
+  }
+
+  getAccountConfig(accountName: string): AccountConfig | undefined {
+    return config.accounts.find(acc => acc.name === accountName);
+  }
+
+  setPendingAuth(accountName: string, callback: (code: string) => Promise<void>) {
+    this.pendingAuth.set(accountName, callback);
+  }
+
+  async handleAuthCallback(code: string, state: string) {
+    const callback = this.pendingAuth.get(state);
+    if (callback) {
+      await callback(code);
+      this.pendingAuth.delete(state);
     }
   }
 
-  private loadTokenFromCache(): any {
+  private saveTokenToCache(accountName: string, tokenResponse: any): void {
+    try {
+      let cache: AccountTokenCache = {};
+      
+      if (fs.existsSync(this.tokenCachePath)) {
+        const data = fs.readFileSync(this.tokenCachePath, 'utf-8');
+        cache = JSON.parse(data);
+      }
+      
+      cache[accountName] = tokenResponse;
+      
+      fs.writeFileSync(this.tokenCachePath, JSON.stringify(cache, null, 2));
+    } catch (error) {
+      console.error(`Failed to save token for ${accountName}:`, error);
+    }
+  }
+
+  private loadTokenFromCache(accountName: string): any {
     try {
       if (fs.existsSync(this.tokenCachePath)) {
         const data = fs.readFileSync(this.tokenCachePath, 'utf-8');
-        return JSON.parse(data);
+        const cache: AccountTokenCache = JSON.parse(data);
+        return cache[accountName];
       }
     } catch (error) {
-      console.error('Failed to load token:', error);
+      console.error(`Failed to load token for ${accountName}:`, error);
     }
     return null;
   }
 
-  clearTokenCache(): void {
+  clearTokenCache(accountName?: string): void {
     try {
-      if (fs.existsSync(this.tokenCachePath)) {
-        fs.unlinkSync(this.tokenCachePath);
+      if (accountName) {
+        // Clear specific account
+        if (fs.existsSync(this.tokenCachePath)) {
+          const data = fs.readFileSync(this.tokenCachePath, 'utf-8');
+          const cache: AccountTokenCache = JSON.parse(data);
+          delete cache[accountName];
+          fs.writeFileSync(this.tokenCachePath, JSON.stringify(cache, null, 2));
+        }
+      } else {
+        // Clear all
+        if (fs.existsSync(this.tokenCachePath)) {
+          fs.unlinkSync(this.tokenCachePath);
+        }
       }
     } catch (error) {
       console.error('Failed to clear token cache:', error);

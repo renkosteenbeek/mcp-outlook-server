@@ -1,0 +1,20 @@
+{
+  "accounts": [
+    {
+      "name": "Personal",
+      "tenantId": "common",
+      "clientId": "your-personal-client-id",
+      "clientSecret": "your-personal-client-secret"
+    },
+    {
+      "name": "Work",
+      "tenantId": "your-work-tenant-id",
+      "clientId": "your-work-client-id",
+      "clientSecret": "your-work-client-secret"
+    }
+  ],
+  "server": {
+    "port": 3000,
+    "redirectUri": "http://localhost:3000/auth/callback"
+  }
+}
