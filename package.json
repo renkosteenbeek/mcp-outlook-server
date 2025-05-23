@@ -1,0 +1,28 @@
+{
+  "name": "mcp-outlook-server",
+  "version": "1.0.0",
+  "description": "MCP server for Microsoft Outlook integration with multi-tenant support",
+  "main": "dist/index.js",
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx watch src/index.ts",
+    "start": "node dist/index.js",
+    "test": "tsx src/test-auth.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.4",
+    "@azure/msal-node": "^2.15.0",
+    "@microsoft/microsoft-graph-client": "^3.0.7",
+    "isomorphic-fetch": "^3.0.0",
+    "express": "^4.21.2",
+    "dotenv": "^16.4.7",
+    "open": "^8.4.2"
+  },
+  "devDependencies": {
+    "@types/node": "^20.17.10",
+    "@types/express": "^5.0.0",
+    "typescript": "^5.7.2",
+    "tsx": "^4.19.2"
+  }
+}
