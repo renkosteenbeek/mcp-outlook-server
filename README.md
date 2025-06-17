@@ -1,3 +1,5 @@
+[![MseeP.ai Security Assessment Badge](https://mseep.net/pr/renkosteenbeek-mcp-outlook-server-badge.png)](https://mseep.ai/app/renkosteenbeek-mcp-outlook-server)
+
 # MCP Outlook Server
 
 An MCP (Model Context Protocol) server for Microsoft Outlook integration with multi-account support.
